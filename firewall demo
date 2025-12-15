@@ -1,0 +1,46 @@
+from scapy.all import sniff, IP, TCP, UDP
+import sqlite3
+from datetime import datetime
+
+# Setup SQLite logging
+conn = sqlite3.connect("firewall_logs.db")
+cursor = conn.cursor()
+cursor.execute("""
+CREATE TABLE IF NOT EXISTS logs (
+    ts TEXT,
+    src TEXT,
+    dst TEXT,
+    proto TEXT,
+    sport INTEGER,
+    dport INTEGER,
+    action TEXT
+)
+""")
+
+BLOCKED_IP = "192.168.1.50"
+
+def packet_callback(packet):
+    if IP in packet:
+        src = packet[IP].src
+        dst = packet[IP].dst
+        proto_num = packet[IP].proto
+        proto = {6: "TCP", 17: "UDP"}.get(proto_num, str(proto_num))
+
+        sport = packet[TCP].sport if TCP in packet else packet[UDP].sport if UDP in packet else None
+        dport = packet[TCP].dport if TCP in packet else packet[UDP].dport if UDP in packet else None
+
+        action = "ALLOW"
+        if src == BLOCKED_IP:
+            action = "BLOCK"
+
+        cursor.execute("INSERT INTO logs VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       (datetime.utcnow().isoformat(), src, dst, proto, sport, dport, action))
+        conn.commit()
+
+        print(f"{action}: {src}:{sport} -> {dst}:{dport} ({proto})")
+
+try:
+    sniff(prn=packet_callback, store=0)
+except KeyboardInterrupt:
+    print("\nStopping firewall...")
+    conn.close()
